@@ -1,0 +1,13 @@
+# Secrets. .env.* covers the editor and shell backups that .env alone misses,
+# which is how a credentials file reached an object store once already.
+.env
+.env.*
+*.bak
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Agent tooling. Not source, and it carries local machine detail.
+.claude/
+.entire/
