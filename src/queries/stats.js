@@ -1,10 +1,18 @@
 import { query, queryOne } from '../db.js';
 import * as p from '../params.js';
 import * as dto from '../dto.js';
-import { resolveWindow, dayClause } from '../windows.js';
+import { resolveWindow, dayClause, fillDays, shiftDays } from '../windows.js';
 
 /**
  * Site-wide time series, straight out of stats_daily.
+ *
+ * Every day in the requested window comes back, including days the rollup wrote
+ * no row for. `stats_daily` is keyed by activity, not by calendar, so a silent
+ * day is simply missing from it — and consumers were reading that absence as a
+ * hole in the archive rather than as the zero it is. The archive stores replies,
+ * not dates; no replies on a date means zero replies on that date. Filling is
+ * clamped to `coverage()` so this never invents zeros outside the span the
+ * rollup has actually seen.
  *
  * `notes` and `note_users` are null for days before the notes epoch. That is
  * deliberate: qbn.com does not record when a note was written, so the archive
@@ -23,12 +31,61 @@ export async function daily(opts = {}) {
         range.params
     );
 
+    const epoch = await notesEpoch();
     return {
         window: win.label,
         from: win.from,
         to: win.toExclusive,
-        notes_epoch: await notesEpoch(),
-        data: rows.map(row)
+        notes_epoch: epoch,
+        data: fillDays(rows.map(row), {
+            ...(await clampToCoverage(win)),
+            blank: (day) => blankDay(day, epoch)
+        })
+    };
+}
+
+/**
+ * The span the rollup actually covers, as inclusive-from / exclusive-to.
+ *
+ * MIN/MAX over the primary key, so it costs nothing. Intersecting the caller's
+ * window with it is what keeps `fillDays` honest: a gap inside the span is a
+ * day that really had no activity, while anything outside it is a day we have
+ * not observed and must not report as a zero. In particular `window=all` fills
+ * the whole archive, and an open-ended `from=2026-09-01` stops at the last
+ * rolled-up day instead of running into the future.
+ */
+async function clampToCoverage({ from, toExclusive }) {
+    const r = await queryOne('SELECT MIN(day) AS first_day, MAX(day) AS last_day FROM stats_daily');
+    const first = dto.toDay(r?.first_day);
+    const last = dto.toDay(r?.last_day);
+    if (!first || !last) return { from: null, toExclusive: null };
+
+    const start = from && from > first ? from : first;
+    const coverEnd = shiftDays(last, 1);
+    const end = toExclusive && toExclusive < coverEnd ? toExclusive : coverEnd;
+    // Window entirely outside the archive: nothing to fill against.
+    return end > start ? { from: start, toExclusive: end } : { from: null, toExclusive: null };
+}
+
+/**
+ * A day the rollup wrote no row for: zero of everything.
+ *
+ * The note columns are the exception and stay null before the notes epoch, for
+ * the same reason they are null on days that do have a row — see the comment on
+ * `daily`. A zero there would read as "nobody wrote a note", which is not
+ * something the archive knows about 2003.
+ */
+function blankDay(day, epoch) {
+    const notesKnown = day >= epoch;
+    return {
+        day,
+        replies: 0,
+        active_users: 0,
+        new_topics: 0,
+        new_profiles: 0,
+        new_nt: 0,
+        notes: notesKnown ? 0 : null,
+        note_users: notesKnown ? 0 : null
     };
 }
 
@@ -89,7 +146,21 @@ export async function monthly(opts = {}) {
          FROM stats_daily WHERE YEAR(day) = ? AND MONTH(day) = ? ORDER BY day ASC`,
         [year, month]
     );
-    return { year, month, data: rows.map(row) };
+    const epoch = await notesEpoch();
+    const nextYear = month === 12 ? year + 1 : year;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const pad = (n) => String(n).padStart(2, '0');
+    const span = await clampToCoverage({
+        from: `${year}-${pad(month)}-01`,
+        toExclusive: `${nextYear}-${pad(nextMonth)}-01`
+    });
+
+    return {
+        year,
+        month,
+        notes_epoch: epoch,
+        data: fillDays(rows.map(row), { ...span, blank: (day) => blankDay(day, epoch) })
+    };
 }
 
 /**

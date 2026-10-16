@@ -107,6 +107,76 @@ describe('queries', { skip: HAVE_DB ? false : 'DB_HOST not set' }, () => {
         assert.equal(years.data[0].year, 2001);
     });
 
+    test('the daily series has no calendar gaps', async () => {
+        // stats_daily is keyed by activity, so silent days are absent rows.
+        // The series must still hand the caller every day, or a dashboard
+        // reads the absence as a hole and draws straight over it.
+        const d = await core.stats.daily({ from: '2026-06-17', to: '2026-06-24' });
+        const days = d.data.map((r) => r.day);
+        assert.deepEqual(days, [
+            '2026-06-17', '2026-06-18', '2026-06-19', '2026-06-20',
+            '2026-06-21', '2026-06-22', '2026-06-23', '2026-06-24'
+        ]);
+
+        // 2026-06-20: qbn.com served 502s for 27 hours. A real zero, not a gap
+        // — the qbn-assigned reply ids run 4164911 -> 4164912 straight through.
+        const outage = d.data.find((r) => r.day === '2026-06-20');
+        assert.equal(outage.replies, 0);
+        assert.equal(outage.active_users, 0);
+        assert.equal(outage.notes, 0, 'after the notes epoch a silent day is a real zero');
+        const [{ n }] = await core.query(
+            "SELECT COUNT(*) AS n FROM replies WHERE status = 200 AND created >= '2026-06-20' AND created < '2026-06-21'"
+        );
+        assert.equal(Number(n), 0, 'the archive really does have nothing that day');
+    });
+
+    test('filling never runs past the days the rollup covers', async () => {
+        const [{ last_day: last }] = await core.query('SELECT MAX(day) AS last_day FROM stats_daily');
+        const lastDay = new Date(last).toISOString().slice(0, 10);
+
+        // A window reaching into the future stops at the last rolled-up day
+        // rather than inventing zeros for days nobody has scraped yet.
+        const d = await core.stats.daily({ from: lastDay, to: '2099-12-31' });
+        assert.equal(d.data[d.data.length - 1].day, lastDay);
+
+        // And 'all' fills the archive without running off either end.
+        const all = await core.stats.daily({ window: 'all' });
+        assert.equal(all.data[all.data.length - 1].day, lastDay);
+        assert.equal(all.data[0].year, undefined);
+        for (let i = 1; i < all.data.length; i++) {
+            const prev = new Date(`${all.data[i - 1].day}T00:00:00Z`);
+            const cur = new Date(`${all.data[i].day}T00:00:00Z`);
+            assert.equal(cur - prev, 86400000, `not contiguous at ${all.data[i].day}`);
+        }
+    });
+
+    test('replied topics agree with the replies they count', async () => {
+        const top = (await core.users.ranking({ window: '30d', sort: 'replies', limit: 1 })).data[0];
+        const r = await core.users.repliedTopics(top.user, { limit: 5 });
+        assert.ok(r.data.length > 0, `${top.user} replied this month but in no topic`);
+        for (let i = 1; i < r.data.length; i++) {
+            assert.ok(r.data[i - 1].last_reply_at >= r.data[i].last_reply_at, 'not most recent first');
+        }
+        // The smallest count is the cheapest to check exhaustively.
+        const t = r.data.reduce((a, b) => (b.replies < a.replies ? b : a));
+        const listed = await core.replies.list({ user: top.user, topic_id: t.id, window: 'all', limit: 200 });
+        if (!listed.meta.has_more) assert.equal(listed.data.length, t.replies);
+        assert.equal(listed.data[0].created, t.last_reply_at);
+
+        const word = t.title.trim().split(/\s+/).find((w) => w.length >= 3);
+        if (word) {
+            const found = await core.users.repliedTopics(top.user, { search: word, limit: 100 });
+            assert.ok(found.data.every((x) => x.title.toLowerCase().includes(word.toLowerCase())));
+        }
+    });
+
+    test('a deep page of one user is the same rows as a shallow one', async () => {
+        const top = (await core.users.ranking({ window: 'all', sort: 'replies', limit: 1 })).data[0];
+        const wide = await core.replies.list({ user: top.user, window: 'all', limit: 10, offset: 1000 });
+        const narrow = await core.replies.list({ user: top.user, window: 'all', limit: 5, offset: 1005 });
+        assert.deepEqual(narrow.data.map((r) => r.created), wide.data.slice(5).map((r) => r.created));
+    });
+
     test('overview is a single coherent snapshot', async () => {
         const o = await core.overview.get();
         assert.equal(typeof o.activity.last_7d.replies, 'number');

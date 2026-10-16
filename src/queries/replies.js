@@ -70,11 +70,21 @@ export async function list(opts = {}) {
     if (!win.from) where.push("r.created > '2000-01-01'");
 
     // Fetch one extra row to answer has_more without a COUNT over 3.9M rows.
+    //
+    // A deferred join: the page is chosen by id first and only its rows are
+    // read in full. Selecting the wide columns directly makes InnoDB fetch the
+    // whole row for every row the OFFSET skips — page 2,000 of one user's
+    // replies took 8.5s that way. With idx_user_status_created (sql/007) the
+    // inner query never leaves the index.
+    const dir = sort === 'oldest' ? 'ASC' : 'DESC';
     const rows = await query(
-        `SELECT ${COLS} FROM replies r
-         WHERE ${where.join(' AND ')}
-         ORDER BY r.created ${sort === 'oldest' ? 'ASC' : 'DESC'}
-         LIMIT ? OFFSET ?`,
+        `SELECT ${COLS}
+         FROM (SELECT r.id FROM replies r
+               WHERE ${where.join(' AND ')}
+               ORDER BY r.created ${dir}
+               LIMIT ? OFFSET ?) page
+         JOIN replies r ON r.id = page.id
+         ORDER BY r.created ${dir}`,
         [...params, lim + 1, off]
     );
 

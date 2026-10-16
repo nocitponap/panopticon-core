@@ -25,7 +25,8 @@ export function today(now = new Date()) {
     return now.toISOString().slice(0, 10);
 }
 
-function shiftDays(isoDate, days) {
+/** Shift a YYYY-MM-DD day by N days, staying in UTC. */
+export function shiftDays(isoDate, days) {
     const d = new Date(`${isoDate}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
@@ -94,4 +95,33 @@ export function instantClause(column, { from, toExclusive }) {
     if (from) { parts.push(`${column} >= ?`); params.push(`${from} 00:00:00`); }
     if (toExclusive) { parts.push(`${column} < ?`); params.push(`${toExclusive} 00:00:00`); }
     return { clause: parts.length ? parts.join(' AND ') : '', params };
+}
+
+/**
+ * Fill a day-keyed series so every day in [from, toExclusive) has a row.
+ *
+ * The rollup only writes a `stats_daily` row for days something happened, so a
+ * silent day arrives as an absent row rather than a zero. It is still a real
+ * observation, not a hole: the scraper polls every five minutes and reply ids
+ * come from qbn.com rather than our own AUTO_INCREMENT, so a day with no row is
+ * a day that provably had nothing to record. 2026-06-20 is the case in point —
+ * qbn.com served 502s for 27 hours, nobody could post, and the id sequence runs
+ * straight through the outage (4164911 → 4164912) with no gap. Reporting that
+ * day as absent made consumers coerce it to zero anyway, or worse, draw a line
+ * from the 19th to the 21st as though the 20th never existed.
+ *
+ * Callers MUST clamp `from`/`toExclusive` to the span the rollup actually
+ * covers — see `coverage()` in queries/stats.js. Filling past either end would
+ * invent zeros for days the archive has nothing to say about: the future, or
+ * the years before qbn.com existed. An unbounded end is therefore treated as
+ * "do not fill" rather than "fill forever".
+ */
+export function fillDays(rows, { from, toExclusive, blank }) {
+    if (!from || !toExclusive) return rows;
+    const have = new Map(rows.map((r) => [r.day, r]));
+    const out = [];
+    for (let day = from; day < toExclusive; day = shiftDays(day, 1)) {
+        out.push(have.get(day) ?? blank(day));
+    }
+    return out;
 }

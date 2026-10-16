@@ -206,6 +206,56 @@ function monthClause({ from, toExclusive }) {
     return { clause: parts.length ? parts.join(' AND ') : '', params };
 }
 
+/**
+ * The topics a user has replied in, most recently replied first.
+ *
+ * Not the topics they started — that is topics.list({ user }). A user who
+ * opened three threads may have posted in three thousand, and "where has this
+ * person been talking" is the second question, not the first.
+ *
+ * The aggregate is read from idx_user_status_created alone (sql/007): without it
+ * each reply is a lookup into the wide clustered row, 7.2s for the heaviest
+ * user, which no autocomplete can wait for. `search` matches topics.title, the
+ * canonical title; replies.topic_title is a per-reply copy.
+ */
+export async function repliedTopics(rawName, opts = {}) {
+    const name = p.username(rawName);
+    const lim = p.limit(opts.limit, 20, 100);
+    const off = p.offset(opts.offset);
+    const term = p.search(opts.search);
+
+    const where = ['t.status = ?'];
+    const params = [name, LIVE, LIVE];
+    if (term) { where.push('t.title LIKE ?'); params.push(p.likeTerm(term)); }
+
+    const rows = await query(
+        `SELECT t.id, t.title, t.topic_type, agg.n, agg.first_at, agg.last_at
+         FROM (SELECT topic_id, COUNT(*) AS n, MIN(created) AS first_at, MAX(created) AS last_at
+               FROM replies WHERE user = ? AND status = ? AND topic_id IS NOT NULL
+               GROUP BY topic_id) agg
+         JOIN topics t ON t.id = agg.topic_id
+         WHERE ${where.join(' AND ')}
+         ORDER BY agg.last_at DESC, t.id DESC
+         LIMIT ? OFFSET ?`,
+        [...params, lim + 1, off]
+    );
+
+    const hasMore = rows.length > lim;
+    const data = (hasMore ? rows.slice(0, lim) : rows).map((r) => ({
+        id: r.id,
+        url: dto.topicUrl(r.id),
+        title: r.title,
+        type: r.topic_type,
+        replies: Number(r.n),
+        first_reply_at: dto.toIso(r.first_at),
+        last_reply_at: dto.toIso(r.last_at)
+    }));
+
+    return dto.page(data, {
+        limit: lim, offset: off, has_more: hasMore, user: name, ...(term ? { search: term } : {})
+    });
+}
+
 /** Notes written by a user. */
 export async function notes(rawName, opts = {}) {
     const name = p.username(rawName);
