@@ -3,7 +3,8 @@ import * as p from '../params.js';
 import { QueryError } from '../params.js';
 import * as dto from '../dto.js';
 import { resolveWindow, dayClause, instantClause } from '../windows.js';
-import { notesFor } from './replies.js';
+import { notesFor, COLS as REPLY_COLS } from './replies.js';
+import { scraped } from '../scraped.js';
 
 const LIVE = 200;
 const TYPES = ['thread', 'profile', 'nt'];
@@ -178,16 +179,15 @@ export async function get(rawId, opts = {}) {
     );
     if (!t) throw p.notFound(`Topic ${id}`);
 
-    const where = ['r.topic_id = ?', 'r.status = ?'];
-    const params = [id, LIVE];
+    const where = ['r.topic_id = ?', scraped('r')];
+    const params = [id];
     if (opts.user !== undefined && opts.user !== null && opts.user !== '') {
         where.push('r.user = ?');
         params.push(p.username(opts.user));
     }
 
     const rows = await query(
-        `SELECT r.id, r.created, r.user, r.topic_id, r.topic_title,
-                r.post, r.score, r.reply_number
+        `SELECT ${REPLY_COLS}
          FROM replies r WHERE ${where.join(' AND ')}
          ORDER BY r.reply_number ASC LIMIT ? OFFSET ?`,
         [...params, lim + 1, off]

@@ -3,6 +3,7 @@ import * as p from '../params.js';
 import * as dto from '../dto.js';
 import { resolveWindow, dayClause, today } from '../windows.js';
 import { search as searchProfiles } from './profiles.js';
+import { scraped } from '../scraped.js';
 
 const LIVE = 200;
 const METRICS = { replies: 'replies', topics: 'topics', notes: 'notes', score: 'score' };
@@ -269,10 +270,10 @@ export async function notes(rawName, opts = {}) {
         `SELECT n.id, n.user, n.comment, n.html_comment, n.position, n.reply_id,
                 n.observed_at, n.source, r.topic_id, r.topic_title, r.user AS reply_user
          FROM notes n JOIN replies r ON r.id = n.reply_id
-         WHERE n.user = ? AND r.status = ?
+         WHERE n.user = ? AND ${scraped('r')}
          ORDER BY n.observed_at DESC, n.id DESC
          LIMIT ? OFFSET ?`,
-        [name, LIVE, lim + 1, off]
+        [name, lim + 1, off]
     );
 
     const hasMore = rows.length > lim;

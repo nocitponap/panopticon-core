@@ -2,13 +2,16 @@ import { query, queryOne } from '../db.js';
 import * as p from '../params.js';
 import * as dto from '../dto.js';
 import { resolveWindow, instantClause } from '../windows.js';
+import { scraped } from '../scraped.js';
 
-// Tombstones — 250,781 deleted replies with empty bodies and unusable
-// timestamps — are not archive content. Nothing here ever returns them.
-const LIVE = 200;
+// Replies that were never captured — some 250k rows with an id, a status and
+// nothing else — are not archive content, and nothing here returns them. A
+// reply captured and deleted afterwards is, and comes back flagged. See
+// scraped.js for the distinction.
 
 // The blob column `notes` is deliberately not selected. See dto.reply().
-const COLS = `r.id, r.created, r.user, r.topic_id, r.topic_title,
+// `status` is selected for dto.reply() to derive `deleted`; it is not returned.
+export const COLS = `r.id, r.status, r.created, r.user, r.topic_id, r.topic_title,
               r.post, r.score, r.reply_number`;
 
 /**
@@ -50,8 +53,8 @@ export async function list(opts = {}) {
     const sort = p.oneOf(opts.sort, ['recent', 'oldest'], 'recent', 'sort');
     const win = resolveWindow(opts);
 
-    const where = ['r.status = ?'];
-    const params = [LIVE];
+    const where = [scraped('r')];
+    const params = [];
 
     if (opts.user !== undefined && opts.user !== null && opts.user !== '') {
         where.push('r.user = ?');
@@ -99,7 +102,7 @@ export async function list(opts = {}) {
 export async function get(rawId) {
     const id = p.id(rawId, 'reply id');
     const row = await queryOne(
-        `SELECT ${COLS} FROM replies r WHERE r.id = ? AND r.status = ?`, [id, LIVE]
+        `SELECT ${COLS} FROM replies r WHERE r.id = ? AND ${scraped('r')}`, [id]
     );
     if (!row) throw p.notFound(`Reply ${id}`);
 

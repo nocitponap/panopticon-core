@@ -7,6 +7,8 @@
  * happened when each maintained its own field lists.
  */
 
+import { GONE } from './scraped.js';
+
 export const replyUrl = (id) => `https://www.qbn.com/reply/${id}/`;
 export const topicUrl = (id) => `https://www.qbn.com/topics/${id}/`;
 
@@ -37,6 +39,12 @@ export function toDay(value) {
  * deliberately absent. Two sources of truth for the same data is how the
  * Observable notebooks ended up with no notes at all for 2021. Callers that
  * want notes get them from the table, attached as `notes`.
+ *
+ * `deleted` is true when the reply has been removed from qbn.com since it was
+ * captured: the last re-check got a 404. Everything else about it is as it was
+ * scraped. A reply the scraper merely failed to reach (a 500) is not deleted.
+ * The raw status is not exposed. The field is absent when the row was read
+ * without its status, rather than claiming a reply is live unchecked.
  */
 export function reply(r, { notes = undefined } = {}) {
     const out = {
@@ -51,6 +59,7 @@ export function reply(r, { notes = undefined } = {}) {
         score: r.score,
         reply_number: r.reply_number
     };
+    if (r.status !== undefined && r.status !== null) out.deleted = r.status === GONE;
     if (notes !== undefined) {
         out.notes_count = notes.length;
         out.notes = notes;

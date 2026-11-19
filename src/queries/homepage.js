@@ -2,8 +2,7 @@ import { query, queryOne } from '../db.js';
 import * as p from '../params.js';
 import * as dto from '../dto.js';
 import { resolveWindow, instantClause } from '../windows.js';
-
-const LIVE = 200;
+import { scraped } from '../scraped.js';
 
 /**
  * The identity of a snapshot is `homepage.snapshot_id`, and its time is
@@ -19,15 +18,15 @@ const LATEST = `SELECT snapshot_id AS id, scraped_at
                 FROM homepage ORDER BY scraped_at DESC LIMIT 1`;
 
 const ENTRY_COLS = `h.position, h.score, h.notes_count, h.reply_id,
-                    r.id, r.created, r.user, r.topic_id, r.topic_title, r.post,
+                    r.id, r.status, r.created, r.user, r.topic_id, r.topic_title, r.post,
                     r.score AS reply_score, r.reply_number`;
 
 async function entriesFor(snapshotId) {
     const rows = await query(
         `SELECT ${ENTRY_COLS}
-         FROM homepage h LEFT JOIN replies r ON r.id = h.reply_id AND r.status = ?
+         FROM homepage h LEFT JOIN replies r ON r.id = h.reply_id AND ${scraped('r')}
          WHERE h.snapshot_id = ? ORDER BY h.position ASC`,
-        [LIVE, snapshotId]
+        [snapshotId]
     );
     return rows.map(dto.homepageEntry);
 }

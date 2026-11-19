@@ -11,9 +11,9 @@ places: a Node API, a PHP port, and the MCP tools. Nothing held them in sync.
 Every fix had to be made three times, and by the time anyone noticed they had
 already drifted. The PHP port has been retired.
 
-Counts here were measured against the mirror on 2026-08-25. They move: a
-deletion turns a reply into a tombstone, so the archive total falls as the
-tombstone total rises. Ask the API for a live figure.
+Counts here were measured against the mirror on 2026-08-25. They move: the
+rollups count live replies, so a deletion lowers the totals even though the
+reply itself is kept and still served. Ask the API for a live figure.
 
 ## Reads the mirror, never the source
 
@@ -26,10 +26,26 @@ best-effort. Nothing in this package connects to the remote database.
 
 Callers get these for free and cannot opt out of them.
 
-- **Tombstones never appear.** `status = 200` on every `replies` and `topics`
-  read. The archive holds 251,122 deleted replies and 145,414 deleted topics
-  with empty bodies and unusable timestamps. They are gaps, not content, and the
-  real archive is 3,916,116 replies across 567,665 topics.
+- **Rows that were never captured never appear.** The archive holds some 251k
+  replies and 145k topics that were already gone the first time the scraper
+  asked: an id, a status, an empty body and an unusable timestamp. They are
+  gaps, not content.
+
+  *Revised 2026-11-19.* Previously stated here as "tombstones never appear:
+  `status = 200` on every read". That was wrong for replies. `status` is the
+  result of the *last* fetch, and the scraper re-checks replies: one that was
+  captured and then deleted keeps its body, date and notes and only changes
+  status. Filtering on status hid those, and also hid any reply whose re-check
+  happened to hit a 500. Replies are now read through `scraped()` in
+  [`src/scraped.js`](./src/scraped.js) — live, or has a body — and carry
+  `deleted: true` when their last check was a 404.
+
+  Two things did not change. Topics still read `status = 200`: nothing re-checks
+  a topic, so its status still means "was it captured", and a topic deleted from
+  qbn.com cannot yet be told from a live one. And everything that *counts*
+  replies still counts live ones, to agree with the rollup tables, which the
+  scraping service builds. A thread's `reply_count` can therefore be smaller
+  than the number of replies returned for it until the rollups follow.
 - **Times go out as ISO-8601 UTC.** `replies.created` is already UTC.
   `topics.date` is a `varchar(255)` carrying an offset, so it is read through
   the pre-parsed `topics.created_utc` column the rollup job maintains.
@@ -93,9 +109,11 @@ npm test          # pure-function tests, no database required
 
 ## What this cannot tell you
 
-- **Deleted content is absent.** The tombstones above are excluded everywhere,
-  so reply and topic IDs have gaps. A missing ID means deleted, not missing
-  data. There is no route around this; the bodies were never captured.
+- **What was gone before the scraper arrived is absent.** Those rows are
+  excluded everywhere, so reply and topic IDs have gaps. A missing ID means it
+  was deleted before it could be read, not missing data. There is no route
+  around this; the bodies were never captured. A reply deleted *after* it was
+  captured is different: it is served, with `deleted: true`.
 - **Note coverage runs the whole archive; note activity does not.** A note has
   no timestamp of its own. The only time it carries is `notes.observed_at`,
   when the scraper saw it, and 2,808,856 of the 2,972,813 notes have none: they

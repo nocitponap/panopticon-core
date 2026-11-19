@@ -1,8 +1,8 @@
 import { query, queryOne } from '../db.js';
 import * as p from '../params.js';
 import * as dto from '../dto.js';
+import { scraped } from '../scraped.js';
 
-const LIVE = 200;
 
 const COLS = `n.id, n.user, n.comment, n.html_comment, n.position, n.reply_id,
               n.observed_at, n.source, r.topic_id, r.topic_title, r.user AS reply_user`;
@@ -25,8 +25,8 @@ export async function list(opts = {}) {
     const lim = p.limit(opts.limit, 50, 200);
     const off = p.offset(opts.offset);
 
-    const where = ['r.status = ?'];
-    const params = [LIVE];
+    const where = [scraped('r')];
+    const params = [];
 
     if (opts.user) { where.push('n.user = ?'); params.push(p.username(opts.user)); }
     if (opts.reply_id) { where.push('n.reply_id = ?'); params.push(p.id(opts.reply_id, 'reply_id')); }
@@ -64,8 +64,8 @@ export async function get(rawId) {
     const id = p.id(rawId, 'note id');
     const row = await queryOne(
         `SELECT ${COLS} FROM notes n JOIN replies r ON r.id = n.reply_id
-         WHERE n.id = ? AND r.status = ?`,
-        [id, LIVE]
+         WHERE n.id = ? AND ${scraped('r')}`,
+        [id]
     );
     if (!row) throw p.notFound(`Note ${id}`);
     return dto.note(row);
