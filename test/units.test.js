@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import * as p from '../src/params.js';
 import * as dto from '../src/dto.js';
-import { scraped } from '../src/scraped.js';
+import { scraped, pageIds } from '../src/scraped.js';
 import { resolveWindow, dayClause, instantClause, fillDays, shiftDays } from '../src/windows.js';
 
 const NOW = new Date('2026-08-20T09:00:00Z');
@@ -121,6 +121,34 @@ test('a note carries the date of its reply as a lower bound', () => {
     assert.equal(out.reply_created, '2026-11-09T16:49:24.000Z');
     // Notes attached to a reply are read without the join, and say nothing.
     assert.ok(!('reply_created' in dto.note({ id: 1, user: 'a', comment: 'x', reply_id: 9 })));
+});
+
+test('a listing with no deleted replies is paged exactly as before', async () => {
+    const calls = [];
+    const none = async (sql, params) => { calls.push([sql, params]); return []; };
+    const page = await pageIds(none, {
+        where: ['r.user = ?'], params: ['utopian'], key: 'created', dir: 'DESC', limit: 51, offset: 5000
+    });
+    // The probe narrows by status before it can touch a body.
+    assert.match(calls[0][0], /r\.status = 404 AND r\.user = \? AND r\.post <> '' LIMIT 1/);
+    assert.deepEqual(calls[0][1], ['utopian']);
+    assert.equal(page.sql,
+        'SELECT r.id FROM replies r WHERE r.status = 200 AND r.user = ? ORDER BY r.created DESC LIMIT ? OFFSET ?');
+    assert.deepEqual(page.params, ['utopian', 51, 5000]);
+    assert.ok(!/post/.test(page.sql), 'the page itself must never test the body');
+});
+
+test('a listing that holds a deleted reply merges two status-narrowed branches', async () => {
+    const some = async () => [{ held: 1 }];
+    const page = await pageIds(some, {
+        where: ['r.topic_id = ?'], params: [781101], key: 'reply_number', limit: 51, offset: 100
+    });
+    assert.match(page.sql, /r\.status = 200 AND r\.topic_id = \?/);
+    assert.match(page.sql, /r\.status = 404 AND r\.topic_id = \? AND r\.post <> ''/);
+    assert.match(page.sql, /UNION ALL/);
+    assert.match(page.sql, /ORDER BY u\.k ASC, u\.id ASC LIMIT \? OFFSET \?$/);
+    // Each branch is asked for no more than the rows up to the end of the page.
+    assert.deepEqual(page.params, [781101, 151, 781101, 151, 51, 100]);
 });
 
 test('list envelope reports what the caller needs to page', () => {

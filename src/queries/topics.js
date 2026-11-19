@@ -4,7 +4,7 @@ import { QueryError } from '../params.js';
 import * as dto from '../dto.js';
 import { resolveWindow, dayClause, instantClause } from '../windows.js';
 import { notesFor, COLS as REPLY_COLS } from './replies.js';
-import { scraped } from '../scraped.js';
+import { pageIds } from '../scraped.js';
 
 const LIVE = 200;
 const TYPES = ['thread', 'profile', 'nt'];
@@ -179,18 +179,22 @@ export async function get(rawId, opts = {}) {
     );
     if (!t) throw p.notFound(`Topic ${id}`);
 
-    const where = ['r.topic_id = ?', scraped('r')];
+    const where = ['r.topic_id = ?'];
     const params = [id];
     if (opts.user !== undefined && opts.user !== null && opts.user !== '') {
         where.push('r.user = ?');
         params.push(p.username(opts.user));
     }
 
+    // The page is chosen by id and joined back, as in replies.list(), so a
+    // deep page of a long thread does not read every body it skips.
+    const page = await pageIds(query, { where, params, key: 'reply_number', limit: lim + 1, offset: off });
     const rows = await query(
         `SELECT ${REPLY_COLS}
-         FROM replies r WHERE ${where.join(' AND ')}
-         ORDER BY r.reply_number ASC LIMIT ? OFFSET ?`,
-        [...params, lim + 1, off]
+         FROM (${page.sql}) page
+         JOIN replies r ON r.id = page.id
+         ORDER BY r.reply_number ASC, r.id ASC`,
+        page.params
     );
 
     const hasMore = rows.length > lim;

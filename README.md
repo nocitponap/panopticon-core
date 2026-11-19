@@ -36,9 +36,22 @@ Callers get these for free and cannot opt out of them.
   result of the *last* fetch, and the scraper re-checks replies: one that was
   captured and then deleted keeps its body, date and notes and only changes
   status. Filtering on status hid those, and also hid any reply whose re-check
-  happened to hit a 500. Replies are now read through `scraped()` in
+  happened to hit a 500. Replies are now read through
   [`src/scraped.js`](./src/scraped.js) — live, or has a body — and carry
   `deleted: true` when their last check was a 404.
+
+  Listings do not test the body row by row, because `post` is in no index and
+  doing so cost seconds on deep pages. `pageIds()` first asks whether a listing
+  holds any deleted reply at all, and pages it the old index-only way when it
+  does not. That probe needs one index the mirror did not have:
+
+  ```sql
+  CREATE INDEX idx_status_created ON replies (status, created);
+  ```
+
+  Without it an unfiltered listing has no cheap way to find the few hundred
+  dated 404 rows among four million, so **create the index before deploying
+  this version.** It is a mirror-only index, like `idx_user_status_created`.
 
   Two things did not change. Topics still read `status = 200`: nothing re-checks
   a topic, so its status still means "was it captured", and a topic deleted from

@@ -2,7 +2,7 @@ import { query, queryOne } from '../db.js';
 import * as p from '../params.js';
 import * as dto from '../dto.js';
 import { resolveWindow, instantClause } from '../windows.js';
-import { scraped } from '../scraped.js';
+import { scraped, pageIds } from '../scraped.js';
 
 // Replies that were never captured — some 250k rows with an id, a status and
 // nothing else — are not archive content, and nothing here returns them. A
@@ -53,7 +53,7 @@ export async function list(opts = {}) {
     const sort = p.oneOf(opts.sort, ['recent', 'oldest'], 'recent', 'sort');
     const win = resolveWindow(opts);
 
-    const where = [scraped('r')];
+    const where = [];
     const params = [];
 
     if (opts.user !== undefined && opts.user !== null && opts.user !== '') {
@@ -79,16 +79,18 @@ export async function list(opts = {}) {
     // whole row for every row the OFFSET skips — page 2,000 of one user's
     // replies took 8.5s that way. With idx_user_status_created (sql/007) the
     // inner query never leaves the index.
+    //
+    // pageIds() writes that inner query. It keeps the page index-only while
+    // still admitting replies that were captured and later deleted, which a
+    // plain test on the body cannot do. See scraped.js.
     const dir = sort === 'oldest' ? 'ASC' : 'DESC';
+    const page = await pageIds(query, { where, params, key: 'created', dir, limit: lim + 1, offset: off });
     const rows = await query(
         `SELECT ${COLS}
-         FROM (SELECT r.id FROM replies r
-               WHERE ${where.join(' AND ')}
-               ORDER BY r.created ${dir}
-               LIMIT ? OFFSET ?) page
+         FROM (${page.sql}) page
          JOIN replies r ON r.id = page.id
-         ORDER BY r.created ${dir}`,
-        [...params, lim + 1, off]
+         ORDER BY r.created ${dir}, r.id ${dir}`,
+        page.params
     );
 
     const hasMore = rows.length > lim;
