@@ -218,7 +218,8 @@ export async function notes(rawName, opts = {}) {
         // undated backfilled ones last, rather than letting a 2008 note sort as
         // this user's most recent.
         `SELECT n.id, n.user, n.comment, n.html_comment, n.position, n.reply_id,
-                n.observed_at, n.source, r.topic_id, r.topic_title, r.user AS reply_user
+                n.observed_at, n.source, r.topic_id, r.topic_title, r.user AS reply_user,
+                r.created AS reply_created
          FROM notes n JOIN replies r ON r.id = n.reply_id
          WHERE n.user = ? AND ${scraped('r')}
          ORDER BY n.observed_at DESC, n.id DESC

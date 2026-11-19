@@ -75,6 +75,10 @@ export function reply(r, { notes = undefined } = {}) {
  * replies.notes blob — we know they exist, not when they were first read.
  * `source` says which: 'live' was watched arriving, 'blob' and 'crawl' were
  * caught up with later.
+ *
+ * `reply_created` is the one bound every note does have: a note cannot have
+ * been written before the reply it hangs off. For the undated majority it is
+ * the only time there is — "no earlier than this", never "at this".
  */
 export function note(n) {
     return {
@@ -94,7 +98,8 @@ export function note(n) {
             topic_id: n.topic_id,
             topic_title: n.topic_title,
             topic_url: n.topic_id ? topicUrl(n.topic_id) : null,
-            reply_user: n.reply_user
+            reply_user: n.reply_user,
+            reply_created: toIso(n.reply_created)
         } : {})
     };
 }
