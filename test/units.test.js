@@ -112,6 +112,17 @@ test('the captured predicate keeps every live row and adds the ones with a body'
     assert.equal(scraped('x'), "(x.status = 200 OR x.post <> '')");
 });
 
+test('a note carries the date of its reply as a lower bound', () => {
+    const n = { id: 1, user: 'a', comment: 'x', html_comment: '', reply_id: 9, observed_at: null,
+        source: 'blob', topic_id: 3, topic_title: 't', reply_user: 'b',
+        reply_created: new Date('2026-11-09T16:49:24Z') };
+    const out = dto.note(n);
+    assert.equal(out.observed_at, null);
+    assert.equal(out.reply_created, '2026-11-09T16:49:24.000Z');
+    // Notes attached to a reply are read without the join, and say nothing.
+    assert.ok(!('reply_created' in dto.note({ id: 1, user: 'a', comment: 'x', reply_id: 9 })));
+});
+
 test('list envelope reports what the caller needs to page', () => {
     const out = dto.page([1, 2, 3], { limit: 3, offset: 6, has_more: true });
     assert.deepEqual(out.meta, { limit: 3, offset: 6, count: 3, has_more: true });

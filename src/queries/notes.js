@@ -5,7 +5,8 @@ import { scraped } from '../scraped.js';
 
 
 const COLS = `n.id, n.user, n.comment, n.html_comment, n.position, n.reply_id,
-              n.observed_at, n.source, r.topic_id, r.topic_title, r.user AS reply_user`;
+              n.observed_at, n.source, r.topic_id, r.topic_title, r.user AS reply_user,
+              r.created AS reply_created`;
 
 /**
  * List notes.
