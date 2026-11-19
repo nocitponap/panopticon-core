@@ -46,6 +46,31 @@ describe('queries', { skip: HAVE_DB ? false : 'DB_HOST not set' }, () => {
         assert.equal(t.reply_count, Number(n), `topic_stats disagrees with replies for ${t.id}`);
     });
 
+    test('a reply deleted after it was scraped is returned, and flagged', async () => {
+        const [row] = await core.query(
+            "SELECT id, topic_id FROM replies WHERE status = 404 AND post <> '' ORDER BY id DESC LIMIT 1"
+        );
+        assert.ok(row, 'expected the archive to hold replies captured before they were deleted');
+
+        const reply = await core.replies.get(row.id);
+        assert.equal(reply.deleted, true);
+        assert.ok(reply.post !== '' && reply.created !== null);
+
+        const day = reply.created.slice(0, 10);
+        const feed = await core.replies.list({ from: day, to: day, topic_id: row.topic_id, limit: 200 });
+        assert.ok(feed.data.some((r) => r.id === row.id && r.deleted), 'missing from the feed of its own day');
+
+        const live = (await core.replies.list({ limit: 1 })).data[0];
+        assert.equal(typeof live.deleted, 'boolean');
+    });
+
+    test('a reply that was never scraped is still a gap', async () => {
+        const [row] = await core.query(
+            "SELECT id FROM replies WHERE status = 404 AND (post IS NULL OR post = '') ORDER BY id DESC LIMIT 1"
+        );
+        await assert.rejects(() => core.replies.get(row.id), (e) => e.status === 404);
+    });
+
     test('tombstones are excluded everywhere', async () => {
         const [{ n }] = await core.query(
             "SELECT COUNT(*) AS n FROM replies WHERE status = 404 AND post = ''"

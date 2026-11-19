@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import * as p from '../src/params.js';
 import * as dto from '../src/dto.js';
+import { scraped } from '../src/scraped.js';
 import { resolveWindow, dayClause, instantClause } from '../src/windows.js';
 
 const NOW = new Date('2026-08-20T09:00:00Z');
@@ -90,9 +91,25 @@ test('the duplicated notes blob is never in a reply payload', () => {
     assert.equal(out.url, 'https://www.qbn.com/reply/4167279/');
     assert.equal(out.topic_url, 'https://www.qbn.com/topics/780417/');
 
+    assert.ok(!('deleted' in out), 'a row read without its status must not claim to be live');
+    assert.ok(!('status' in out), 'the raw status is not public');
+
     const withNotes = dto.reply(row, { notes: [{ user: 'x', comment: 'y' }] });
     assert.equal(withNotes.notes_count, 1);
     assert.deepEqual(withNotes.notes, [{ user: 'x', comment: 'y' }]);
+});
+
+test('deleted means a 404 on the last check, and nothing else', () => {
+    const row = { id: 1, created: new Date('2026-11-09T16:49:24Z'), post: '<p>hi</p>' };
+    assert.equal(dto.reply({ ...row, status: 200 }).deleted, false);
+    assert.equal(dto.reply({ ...row, status: 404 }).deleted, true);
+    // The scraper could not reach it; that is not evidence it was removed.
+    assert.equal(dto.reply({ ...row, status: 500 }).deleted, false);
+});
+
+test('the captured predicate keeps every live row and adds the ones with a body', () => {
+    assert.equal(scraped('r'), "(r.status = 200 OR r.post <> '')");
+    assert.equal(scraped('x'), "(x.status = 200 OR x.post <> '')");
 });
 
 test('list envelope reports what the caller needs to page', () => {
